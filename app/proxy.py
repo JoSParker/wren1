@@ -10,22 +10,46 @@ from .scanners.output_scanner import scan_output
 from .policy.policy_engine import policy_engine
 from .logger.audit_logger import log_event
 from .security.rate_limiter import check_rate_limit
-
+from .tool_security.tool_guard import extract_tool_calls, validate_tool_call
+import os
+import tempfile
+import shutil
 
 async def forward_request(request: Request):
-    body = await request.json()
-    messages = body.get("messages", [])
-
-    for m in messages:
-        if m.get("role") == "user":
-            user_input = m.get("content", "")
-            # Logic moved to consolidated scan_input for better performance
     tenant_id = getattr(request.state, "tenant_id", "default")
     policy = policy_engine.get(tenant_id)
+    content_type = request.headers.get("Content-Type", "")
+    
+    # Capture session and client IP
+    session_id = request.headers.get("X-Session-ID", "unknown")
+    ip_address = request.client.host if request.client else "unknown"
 
-    # -------- INPUT SCAN --------
-    scan_result = scan_input(body)
-    body = scan_result["modified_body"]
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+            return JSONResponse(status_code=400, content={"error": "No file uploaded"})
+        
+        print(f"[Wren Proxy] Upload: {file.filename}, Type: {file.content_type}")
+
+        # Save to temp file strictly for the pilot
+        fd, temp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename)[1])
+        with os.fdopen(fd, 'wb') as tmp:
+            tmp.write(await file.read())
+        
+        body = {"file_path": temp_path}
+        scan_result = scan_input(body, content_type=file.content_type, filename=file.filename)
+        
+        # Cleanup temp file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        body = scan_result["modified_body"]
+    else:
+        body = await request.json()
+        # -------- INPUT SCAN --------
+        scan_result = scan_input(body, content_type=content_type)
+        body = scan_result["modified_body"]
 
     # Build a deterministic request hash from all user messages
     combined_text = ""
@@ -36,10 +60,6 @@ async def forward_request(request: Request):
     request_hash = hashlib.sha256(
         combined_text.encode()
     ).hexdigest()
-
-    # Capture session and client IP
-    session_id = request.headers.get("X-Session-ID", "unknown")
-    ip_address = request.client.host
 
     # Per-tenant rate limit (60 req/min). Block and log when exceeded.
     if not check_rate_limit(tenant_id):
@@ -73,14 +93,23 @@ async def forward_request(request: Request):
         })
 
         if policy.get("input", {}).get("block_on_injection"):
-            ml_result = scan_result.get("ml_result", {})
+            risk_result = scan_result.get("risk_result", {})
             return JSONResponse(
                 status_code=403,
                 content={
                     "error": "Blocked by Wren",
                     "reason": scan_result["reason"],
-                    "ml_score": ml_result.get("scores", {}).get("attack", 0.0),
-                    "detection_type": ml_result.get("category", "ATTACK"),
+                    "wren_meta": {
+                        "risk_score": risk_result.get("risk_score", 0.0),
+                        "detection_type": risk_result.get("category", "ATTACK"),
+                        "is_attack": True,
+                        "signals": risk_result.get("signals", {}),
+                        "translation": scan_result.get("translation", {}),
+                        "extracted_text": scan_result.get("extracted_text", ""),
+                        "file_metadata": scan_result.get("file_metadata", {}),
+                        "ocr_enabled": scan_result.get("ocr_enabled", True),
+                        "warning": "OCR is currently unavailable (Tesseract not found). Text inside images was not scanned." if not scan_result.get("ocr_enabled", True) else None
+                    }
                 }
             )
 
@@ -167,11 +196,51 @@ async def forward_request(request: Request):
                         "action": "blocked"
                     })
 
+                    # Attach risk metadata even for blocked tool calls
+                    risk_result = scan_result.get("risk_result", {})
                     return JSONResponse(
                         status_code=403,
                         content={
                             "error": "Tool call blocked by Wren",
-                            "tool": tool_name
+                            "tool": tool_name,
+                            "reason": f"Unauthorized tool call attempted: {tool_name}",
+                            "wren_meta": {
+                                "risk_score": risk_result.get("risk_score", 0.0),
+                                "detection_type": risk_result.get("category", "BENIGN"),
+                                "tool_call_detected": True,
+                                "is_attack": True
+                            }
+                        }
+                    )
+
+            # Extra tool_guard validation for consistency
+            for tool in tool_calls:
+                is_valid, reason = validate_tool_call(tool)
+                if not is_valid:
+                    log_event({
+                        "tenant_id": tenant_id,
+                        "session_id": session_id,
+                        "request_hash": request_hash,
+                        "ip_address": ip_address,
+                        "module": "tool_security",
+                        "risk": "high",
+                        "action": "blocked",
+                        "reason": f"Tool policy violation: {reason}"
+                    })
+                    # Attach risk metadata for guard violation
+                    risk_result = scan_result.get("risk_result", {})
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "error": True,
+                            "type": "tool_security_block",
+                            "reason": reason,
+                            "wren_meta": {
+                                "risk_score": risk_result.get("risk_score", 0.0),
+                                "detection_type": risk_result.get("category", "BENIGN"),
+                                "tool_call_detected": True,
+                                "is_attack": True
+                            }
                         }
                     )
 
@@ -204,12 +273,19 @@ async def forward_request(request: Request):
 
                 message["content"] = redacted_content
 
-        # Attach ML scan metadata to response
-        ml_result = scan_result.get("ml_result", {})
+        # Attach composite risk metadata to response
+        risk_result = scan_result.get("risk_result", {})
         data["wren_meta"] = {
-            "ml_score": ml_result.get("scores", {}).get("attack", 0.0),
-            "detection_type": ml_result.get("category", "none"),
-            "is_attack": ml_result.get("category") == "ATTACK",
+            "risk_score": risk_result.get("risk_score", 0.0),
+            "detection_type": risk_result.get("category", "BENIGN"),
+            "is_attack": risk_result.get("category") == "ATTACK",
+            "signals": risk_result.get("signals", {}),
+            "translation": scan_result.get("translation", {}),
+            "tool_call_detected": len(extract_tool_calls(data)) > 0,
+            "extracted_text": scan_result.get("extracted_text", ""),
+            "file_metadata": scan_result.get("file_metadata", {}),
+            "ocr_enabled": scan_result.get("ocr_enabled", True),
+            "warning": "OCR is currently unavailable (Tesseract not found). Text inside images was not scanned." if not scan_result.get("ocr_enabled", True) else None
         }
 
         return JSONResponse(content=data)
@@ -228,6 +304,77 @@ async def forward_request(request: Request):
             json=body,
             params=request.query_params
         )
+
+    # -------- POST-RESPONSE TOOL SECURITY --------
+    try:
+        # Only process if response is successful and is JSON
+        if response.status_code == 200 and "application/json" in response.headers.get("Content-Type", ""):
+            data = response.json()
+            tool_calls = extract_tool_calls(data)
+            
+            if tool_calls:
+                for tool in tool_calls:
+                    is_valid, reason = validate_tool_call(tool)
+                    if not is_valid:
+                        log_event({
+                            "tenant_id": tenant_id,
+                            "session_id": session_id,
+                            "request_hash": request_hash,
+                            "ip_address": ip_address,
+                            "module": "tool_security",
+                            "risk": "high",
+                            "action": "blocked",
+                            "reason": f"Tool policy violation: {reason}"
+                        })
+                        # Attach risk metadata for block
+                        risk_result = scan_result.get("risk_result", {})
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "error": True,
+                                "type": "tool_security_block",
+                                "reason": reason,
+                                "wren_meta": {
+                                    "risk_score": risk_result.get("risk_score", 0.0),
+                                    "detection_type": risk_result.get("category", "BENIGN"),
+                                    "tool_call_detected": True,
+                                    "is_attack": True
+                                }
+                            }
+                        )
+                
+                # Attach metadata if allowed
+                risk_result = scan_result.get("risk_result", {})
+                data["wren_meta"] = {
+                    "risk_score": risk_result.get("risk_score", 0.0),
+                    "detection_type": risk_result.get("category", "BENIGN"),
+                    "is_attack": risk_result.get("category") == "ATTACK",
+                    "signals": risk_result.get("signals", {}),
+                    "tool_call_detected": True,
+                    "extracted_text": scan_result.get("extracted_text", ""),
+                    "file_metadata": scan_result.get("file_metadata", {})
+                }
+                return JSONResponse(content=data)
+            
+            # Even if no tool calls, attach file/risk metadata if a file was processed
+            if "multipart/form-data" in request.headers.get("Content-Type", "") or scan_result.get("file_metadata"):
+                risk_result = scan_result.get("risk_result", {})
+                data["wren_meta"] = {
+                    "risk_score": risk_result.get("risk_score", 0.0),
+                    "detection_type": risk_result.get("category", "BENIGN"),
+                    "is_attack": risk_result.get("category") == "ATTACK",
+                    "signals": risk_result.get("signals", {}),
+                    "tool_call_detected": False,
+                    "extracted_text": scan_result.get("extracted_text", ""),
+                    "file_metadata": scan_result.get("file_metadata", {}),
+                    "ocr_enabled": scan_result.get("ocr_enabled", True),
+                    "warning": "OCR is currently unavailable (Tesseract not found). Text inside images was not scanned." if not scan_result.get("ocr_enabled", True) else None
+                }
+                return JSONResponse(content=data)
+
+    except Exception as e:
+        # Fallback to original response if parsing fails
+        print(f"[Tool Security] Warning: Could not parse response for tool check: {e}")
 
     return Response(
         content=response.content,

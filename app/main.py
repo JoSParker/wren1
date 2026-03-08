@@ -29,10 +29,24 @@ app.add_middleware(
 )
 
 
+# -------- AUTH KEY CACHE (5 min TTL) --------
+import time as _time
+_key_cache = {}       # {api_key: (tenant_id, expires_at)}
+_CACHE_TTL = 300      # seconds
+
+
 # -------- AUTH MUST BE DEFINED BEFORE ROUTES --------
 async def validate_wren_key(x_wren_key: str = Header(None)):
     if not x_wren_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Fast path: check in-memory cache
+    cached = _key_cache.get(x_wren_key)
+    if cached and cached[1] > _time.time():
+        class MockKey:
+            def __init__(self, tenant_id):
+                self.tenant_id = tenant_id
+        return MockKey(cached[0])
 
     try:
         async with httpx.AsyncClient() as client:
@@ -43,22 +57,24 @@ async def validate_wren_key(x_wren_key: str = Header(None)):
             )
         
         if resp.status_code != 200:
-            print(f"DEBUG: Key verification failed with status {resp.status_code}")
             raise HTTPException(status_code=401, detail="Unauthorized")
             
         data = resp.json()
+        tenant_id = data["tenant_id"]
+
+        # Cache the verified key
+        _key_cache[x_wren_key] = (tenant_id, _time.time() + _CACHE_TTL)
         
-        # Return a mock object that has a tenant_id property to maintain compatibility
         class MockKey:
-            def __init__(self, tenant_id):
-                self.tenant_id = tenant_id
+            def __init__(self, tid):
+                self.tenant_id = tid
         
-        return MockKey(data["tenant_id"])
+        return MockKey(tenant_id)
     except Exception as e:
-        print(f"DEBUG: Key validation error: {e}")
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 
 # -------- HEALTH --------

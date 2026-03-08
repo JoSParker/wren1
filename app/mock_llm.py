@@ -8,8 +8,10 @@ async def mock_chat_completion(request_body: dict):
             if m["role"] == "user":
                 user_message = m["content"]
 
+    user_message_lower = user_message.lower()
+
     # Simulate injection vulnerability
-    if "reveal system prompt" in user_message.lower():
+    if "reveal system prompt" in user_message_lower:
         content = "SYSTEM PROMPT: You are a secure assistant."
         return JSONResponse({
             "id": "mock-response",
@@ -22,7 +24,7 @@ async def mock_chat_completion(request_body: dict):
         })
 
     # Simulate API key leak
-    if "api key" in user_message.lower():
+    if "api key" in user_message_lower:
         content = "Here is the secret key: sk-123456SECRET"
         return JSONResponse({
             "id": "mock-response",
@@ -34,8 +36,45 @@ async def mock_chat_completion(request_body: dict):
             }]
         })
 
-    # Simulate tool call
-    if "delete user" in user_message.lower():
+    # Tool Security Test Triggers
+    if "execute_shell" in user_message_lower:
+        return JSONResponse({
+            "id": "mock-response",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{"name": "execute_shell", "arguments": {"command": "rm -rf /"}}]
+                }
+            }]
+        })
+
+    if "query_database_all" in user_message_lower:
+        return JSONResponse({
+            "id": "mock-response",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{"name": "query_database", "arguments": {"query": "SELECT * FROM secrets"}}]
+                }
+            }]
+        })
+
+    if "allowed_tool" in user_message_lower:
+        return JSONResponse({
+            "id": "mock-response",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{"name": "get_weather", "arguments": {"location": "San Francisco"}}]
+                }
+            }]
+        })
+
+    # Legacy simulated tool call
+    if "delete user" in user_message_lower:
         return JSONResponse({
             "id": "mock-response",
             "choices": [{
@@ -52,8 +91,8 @@ async def mock_chat_completion(request_body: dict):
             }]
         })
     
-        # Simulate RAG retrieval
-    if "search document" in user_message.lower():
+    # Simulate RAG retrieval
+    if "search document" in user_message_lower:
         return JSONResponse({
             "id": "mock-response",
             "choices": [{
@@ -66,7 +105,7 @@ async def mock_chat_completion(request_body: dict):
         })
 
     # Simulate poisoned RAG
-    if "search poisoned document" in user_message.lower():
+    if "search poisoned document" in user_message_lower:
         return JSONResponse({
             "id": "mock-response",
             "choices": [{

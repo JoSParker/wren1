@@ -10,6 +10,9 @@ tools:
   allowed:
     - get_user_info
     - search
+    - execute_shell
+    - query_database
+    - get_weather
 
   blocked:
     - delete_record

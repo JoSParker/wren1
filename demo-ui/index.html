@@ -20,8 +20,16 @@
 
 <div id="messages"></div>
 
-<input id="input" placeholder="Type a message..." />
-<button onclick="sendMessage()">Send</button>
+<div style="display: flex; gap: 5px; align-items: center; margin-top: 10px;">
+    <input type="file" id="fileInput" accept="application/pdf" style="display:none" onchange="handleFile(this, 'application/pdf')">
+    <input type="file" id="imageInput" accept="image/*" style="display:none" onchange="handleFile(this, 'image/png')">
+    
+    <button class="btn-file" onclick="document.getElementById('fileInput').click()" title="Upload PDF">📄</button>
+    <button class="btn-file" onclick="document.getElementById('imageInput').click()" title="Upload Image">🖼️</button>
+    
+    <input id="input" style="flex-grow: 1; padding: 5px;" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendMessage()" />
+    <button onclick="sendMessage()" style="padding: 5px 15px;">Send</button>
+</div>
 
 </div>
 

@@ -1,0 +1,353 @@
+/* ============================================================
+   WREN — AI Firewall Demo
+   Developer-First Dark UI · Monochromatic · Terminal-Inspired
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-root:      #0A0A09;
+  --bg-surface:   #121212;
+  --bg-raised:    #161616;
+  --bg-input:     #1A1A1A;
+  --border-dim:   #222222;
+  --border-mid:   #333333;
+
+  --text-primary:   #EAEAEA;
+  --text-secondary: #888888;
+  --text-muted:     #555555;
+
+  --accent-block:   #FF3B3B;
+  --accent-redact:  #F59E0B;
+  --accent-ok:      #22C55E;
+
+  --font-sans: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --transition: 150ms ease;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg-root);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  padding: 0 0 40px;
+}
+
+/* ── Page Header ──────────────────────────────────────────── */
+h1 {
+  font-family: var(--font-mono);
+  font-size: clamp(13px, 1.8vw, 16px);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  padding: 20px 32px;
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+h1::before {
+  content: '▣';
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+/* ── Section Headings ─────────────────────────────────────── */
+h2 {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+}
+
+/* ── Layout Container ─────────────────────────────────────── */
+.container {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 1px;
+  background: var(--border-dim);
+  margin: 24px 32px;
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  height: calc(100vh - 130px);
+  min-height: 500px;
+}
+
+/* ── Chat Panel ───────────────────────────────────────────── */
+.chat {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.chat h2 { flex-shrink: 0; }
+
+/* ── Messages ─────────────────────────────────────────────── */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-mid) transparent;
+}
+
+#messages::-webkit-scrollbar { width: 4px; }
+#messages::-webkit-scrollbar-track { background: transparent; }
+#messages::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+#messages div {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-dim);
+  max-width: 92%;
+  word-break: break-word;
+  white-space: pre-wrap;
+  animation: msgIn 120ms ease both;
+}
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* User messages */
+#messages div.user {
+  background: var(--bg-raised);
+  border-color: var(--border-mid);
+  color: var(--text-primary);
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+/* Bot / OK responses */
+#messages div.bot {
+  background: var(--bg-input);
+  border-color: var(--border-dim);
+  color: var(--text-secondary);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+
+/* Blocked messages */
+#messages div.block {
+  background: rgba(255, 59, 59, 0.06);
+  border-color: rgba(255, 59, 59, 0.35);
+  color: #FF6B6B;
+  align-self: flex-start;
+  position: relative;
+  padding-left: 18px;
+}
+
+#messages div.block::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent-block);
+  border-radius: 2px 0 0 2px;
+}
+
+/* ── Input Row ────────────────────────────────────────────── */
+.chat > div[style] {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+}
+
+#input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-mid);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--transition);
+  width: 100%;
+}
+
+#input::placeholder {
+  color: var(--text-muted);
+}
+
+#input:focus {
+  border-color: #444;
+}
+
+/* Send button */
+button[onclick="sendMessage()"] {
+  background: var(--text-primary);
+  color: #000;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition);
+}
+
+button[onclick="sendMessage()"]:hover {
+  background: #CCC;
+}
+
+button[onclick="sendMessage()"]:active {
+  background: #AAA;
+}
+
+/* File buttons */
+.btn-file {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-mid);
+  color: var(--text-secondary);
+  font-size: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color var(--transition), color var(--transition);
+  line-height: 1;
+  padding: 0;
+}
+
+.btn-file:hover {
+  border-color: #555;
+  color: var(--text-primary);
+}
+
+/* ── Events / Security Monitor Panel ─────────────────────── */
+.events {
+  background: var(--bg-root);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border-dim);
+}
+
+.events h2 { flex-shrink: 0; }
+
+#events {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-mid) transparent;
+}
+
+#events::-webkit-scrollbar { width: 3px; }
+#events::-webkit-scrollbar-thumb { background: var(--border-mid); }
+
+#events div {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  border-radius: 3px;
+  border-left: 2px solid var(--border-dim);
+  background: var(--bg-surface);
+  line-height: 1.5;
+  transition: border-color var(--transition);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+#events div:hover {
+  border-left-color: var(--border-mid);
+  color: var(--text-secondary);
+}
+
+/* Blocked event */
+#events div.block {
+  border-left-color: var(--accent-block);
+  color: #FF7070;
+  background: rgba(255, 59, 59, 0.04);
+}
+
+/* Redacted event */
+#events div.redact {
+  border-left-color: var(--accent-redact);
+  color: #FBB040;
+  background: rgba(245, 158, 11, 0.04);
+}
+
+/* ── Scrollbar global ─────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-mid) transparent;
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 800px) {
+  .container {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 260px;
+    margin: 12px 12px;
+    height: auto;
+    max-height: calc(100vh - 100px);
+  }
+
+  h1 {
+    padding: 14px 16px;
+    font-size: 11px;
+  }
+
+  .events {
+    border-left: none;
+    border-top: 1px solid var(--border-dim);
+  }
+}
