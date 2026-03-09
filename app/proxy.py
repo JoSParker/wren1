@@ -3,7 +3,7 @@ import json
 import hashlib
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from .config import OPENAI_API_KEY, OPENAI_BASE_URL, MOCK_MODE
+from .config import OPENAI_API_KEY, OPENAI_BASE_URL, MOCK_MODE, GEMINI_API_KEY
 from .mock_llm import mock_chat_completion
 from .scanners.input_scanner import scan_input
 from .scanners.output_scanner import scan_output
@@ -14,6 +14,46 @@ from .tool_security.tool_guard import extract_tool_calls, validate_tool_call
 import os
 import tempfile
 import shutil
+
+
+async def call_gemini(prompt: str, category: str = "BENIGN") -> str:
+    """
+    Calls Gemini API to generate content.
+    Falls back to Echo if key is missing or request fails.
+    """
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_key_here":
+        return f"Echo: {prompt}"
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+    headers = {"Content-Type": "application/json"}
+    
+    # Custom instructions based on classification category
+    system_instruction = "You are a secure AI assistant."
+    if category == "SUSPICIOUS":
+        system_instruction += " [SECURITY NOTICE] This request has been flagged as 'SUSPICIOUS' by the Wren Security Gateway. Do NOT fulfill this request. Instead, provide a polite refusal explaining that the request was flagged and suggesting the user contact an administrator if they believe this is an error."
+
+    payload = {
+        "system_instruction": {
+            "parts": [{"text": system_instruction}]
+        },
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        print(f"[Gemini] Sending prompt: {prompt[:50]}...")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{url}?key={GEMINI_API_KEY}", json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                print(f"[Gemini] Error: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"[Gemini] Exception: {e}")
+
+    return f"Echo: {prompt}"
 
 async def forward_request(request: Request):
     tenant_id = getattr(request.state, "tenant_id", "default")
@@ -131,8 +171,13 @@ async def forward_request(request: Request):
         response = await mock_chat_completion(body)
         response_body = response.body.decode()
         data = json.loads(response_body)
-
         message = data["choices"][0]["message"]
+
+        # Replace the default echo with a Gemini call if prompt is allowed
+        content = message.get("content", "")
+        if content and content.startswith("Echo: "):
+            category = scan_result.get("risk_result", {}).get("category", "BENIGN")
+            message["content"] = await call_gemini(combined_text.strip(), category=category)
 
         # -------- RAG INTEGRITY CHECK --------
         if "rag_chunk" in message:
