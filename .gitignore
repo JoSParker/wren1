@@ -30,6 +30,7 @@ ENV/
 .venv
 env.bak
 env.resource
+env
 
 # Database
 *.db
